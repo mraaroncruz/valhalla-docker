@@ -1,0 +1,75 @@
+# base image
+FROM ubuntu:21.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Europe/Vienna
+
+# grab all of the valhalla software from ppa
+RUN apt update && \
+    apt install -y software-properties-common git wget curl ca-certificates gnupg2 build-essential python3-pip \
+                       libsqlite3-mod-spatialite libsqlite3-dev libspatialite-dev \
+                       autoconf libtool pkg-config libczmq-dev libzmq5 \
+                       libcurl4-openssl-dev zlib1g-dev jq libgeos-dev liblz4-dev \
+                       libgeos++-dev libprotobuf-dev protobuf-compiler \
+                       libboost-all-dev libluajit-5.1-dev spatialite-bin unzip
+
+RUN wget https://github.com/Kitware/CMake/releases/download/v3.17.2/cmake-3.17.2-Linux-x86_64.sh \
+      -q -O /tmp/cmake-install.sh && \
+      chmod u+x /tmp/cmake-install.sh && \
+      mkdir /usr/bin/cmake && \
+      /tmp/cmake-install.sh --skip-license --prefix=/usr/bin/cmake && \
+      rm /tmp/cmake-install.sh && \
+      ln -s /usr/bin/cmake/bin/cmake /usr/local/bin/cmake
+
+WORKDIR /usr/local/src
+
+# Install prime server
+
+RUN apt install -y autoconf automake libtool make gcc g++ lcov \
+    && apt install libcurl4-openssl-dev libzmq3-dev libczmq-dev
+
+RUN git clone https://github.com/kevinkreiser/prime_server prime-server && \
+    cd prime-server && \
+    git checkout tags/0.7.0 && \
+    git submodule update --init --recursive && \
+    cmake -B build . && \
+    cmake --build build && \
+    if [ $? -ne 0 ]; then cmake --build build -DCMAKE_OSX_SYSROOT="/Library/Developer/CommandLineTools/SDKs/MacOSX10.15.sdk"; fi && \
+    make -C build test -j$(nproc) && \
+    make -C build install
+
+# Install conan
+
+RUN pip3 install conan && \
+    git clone https://github.com/valhalla/valhalla && \
+    cd valhalla && \
+    git reset --hard 4c94422261b15804eb3ff67fb1a40e1d62c7b964 && \
+    git submodule sync && \
+    git submodule update --init --recursive
+
+WORKDIR /usr/local/src/valhalla
+
+RUN mkdir build && \
+    cd build && \
+    cmake .. \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX=/usr \
+      -DENABLE_WERROR=OFF \
+      -DENABLE_BENCHMARKS=OFF
+
+RUN cd build && \
+    make -j$(nproc) && \
+    make install
+
+
+# change working dir
+RUN mkdir -p /code/valhalla
+WORKDIR /code/valhalla
+
+# generate config
+# RUN valhalla_build_config \
+#   --mjolnir-tile-dir '/data/valhalla' \
+#   --mjolnir-tile-extract '/data/valhalla.tar' \
+#   --mjolnir-timezone '/data/valhalla/timezones.sqlite' \
+#   --mjolnir-admin '/data/valhalla/admins.sqlite' > valhalla.json
+
